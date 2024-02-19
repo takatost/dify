@@ -9,7 +9,8 @@ from werkzeug.exceptions import Forbidden
 from constants.languages import demo_model_templates, languages
 from constants.model_template import model_templates
 from controllers.console import api
-from controllers.console.app.error import AppNotFoundError, ProviderNotInitializeError
+from controllers.console.app.error import ProviderNotInitializeError
+from controllers.console.app.wraps import get_app_model
 from controllers.console.setup import setup_required
 from controllers.console.wraps import account_initialization_required, cloud_edition_billing_resource_check
 from core.errors.error import LLMBadRequestError, ProviderTokenNotInitError
@@ -27,13 +28,6 @@ from fields.app_fields import (
 from libs.login import login_required
 from models.model import App, AppModelConfig, Site
 from services.app_model_config_service import AppModelConfigService
-
-
-def _get_app(app_id, tenant_id):
-    app = db.session.query(App).filter(App.id == app_id, App.tenant_id == tenant_id).first()
-    if not app:
-        raise AppNotFoundError
-    return app
 
 
 class AppListApi(Resource):
@@ -232,33 +226,28 @@ class AppApi(Resource):
     @setup_required
     @login_required
     @account_initialization_required
+    @get_app_model
     @marshal_with(app_detail_fields_with_site)
-    def get(self, app_id):
+    def get(self, app_model):
         """Get app detail"""
-        app_id = str(app_id)
-        app = _get_app(app_id, current_user.current_tenant_id)
-
-        return app
+        return app_model
 
     @setup_required
     @login_required
     @account_initialization_required
-    def delete(self, app_id):
+    @get_app_model
+    def delete(self, app_model):
         """Delete app"""
-        app_id = str(app_id)
-
         if not current_user.is_admin_or_owner:
             raise Forbidden()
 
-        app = _get_app(app_id, current_user.current_tenant_id)
-
-        db.session.delete(app)
+        db.session.delete(app_model)
         db.session.commit()
 
         # todo delete related data??
         # model_config, site, api_token, conversation, message, message_feedback, message_annotation
 
-        app_was_deleted.send(app)
+        app_was_deleted.send(app_model)
 
         return {'result': 'success'}, 204
 
@@ -267,86 +256,77 @@ class AppNameApi(Resource):
     @setup_required
     @login_required
     @account_initialization_required
+    @get_app_model
     @marshal_with(app_detail_fields)
-    def post(self, app_id):
-        app_id = str(app_id)
-        app = _get_app(app_id, current_user.current_tenant_id)
-
+    def post(self, app_model):
         parser = reqparse.RequestParser()
         parser.add_argument('name', type=str, required=True, location='json')
         args = parser.parse_args()
 
-        app.name = args.get('name')
-        app.updated_at = datetime.utcnow()
+        app_model.name = args.get('name')
+        app_model.updated_at = datetime.utcnow()
         db.session.commit()
-        return app
+        return app_model
 
 
 class AppIconApi(Resource):
     @setup_required
     @login_required
     @account_initialization_required
+    @get_app_model
     @marshal_with(app_detail_fields)
-    def post(self, app_id):
-        app_id = str(app_id)
-        app = _get_app(app_id, current_user.current_tenant_id)
-
+    def post(self, app_model):
         parser = reqparse.RequestParser()
         parser.add_argument('icon', type=str, location='json')
         parser.add_argument('icon_background', type=str, location='json')
         args = parser.parse_args()
 
-        app.icon = args.get('icon')
-        app.icon_background = args.get('icon_background')
-        app.updated_at = datetime.utcnow()
+        app_model.icon = args.get('icon')
+        app_model.icon_background = args.get('icon_background')
+        app_model.updated_at = datetime.utcnow()
         db.session.commit()
 
-        return app
+        return app_model
 
 
 class AppSiteStatus(Resource):
     @setup_required
     @login_required
     @account_initialization_required
+    @get_app_model
     @marshal_with(app_detail_fields)
-    def post(self, app_id):
+    def post(self, app_model):
         parser = reqparse.RequestParser()
         parser.add_argument('enable_site', type=bool, required=True, location='json')
         args = parser.parse_args()
-        app_id = str(app_id)
-        app = db.session.query(App).filter(App.id == app_id, App.tenant_id == current_user.current_tenant_id).first()
-        if not app:
-            raise AppNotFoundError
 
-        if args.get('enable_site') == app.enable_site:
-            return app
+        if args.get('enable_site') == app_model.enable_site:
+            return app_model
 
-        app.enable_site = args.get('enable_site')
-        app.updated_at = datetime.utcnow()
+        app_model.enable_site = args.get('enable_site')
+        app_model.updated_at = datetime.utcnow()
         db.session.commit()
-        return app
+        return app_model
 
 
 class AppApiStatus(Resource):
     @setup_required
     @login_required
     @account_initialization_required
+    @get_app_model
     @marshal_with(app_detail_fields)
-    def post(self, app_id):
+    def post(self, app_model):
         parser = reqparse.RequestParser()
         parser.add_argument('enable_api', type=bool, required=True, location='json')
         args = parser.parse_args()
 
-        app_id = str(app_id)
-        app = _get_app(app_id, current_user.current_tenant_id)
+        if args.get('enable_api') == app_model.enable_api:
+            return app_model
 
-        if args.get('enable_api') == app.enable_api:
-            return app
-
-        app.enable_api = args.get('enable_api')
-        app.updated_at = datetime.utcnow()
+        app_model.enable_api = args.get('enable_api')
+        app_model.updated_at = datetime.utcnow()
         db.session.commit()
-        return app
+        return app_model
 
 
 class AppCopy(Resource):
@@ -376,16 +356,14 @@ class AppCopy(Resource):
     @setup_required
     @login_required
     @account_initialization_required
+    @get_app_model
     @marshal_with(app_detail_fields)
-    def post(self, app_id):
-        app_id = str(app_id)
-        app = _get_app(app_id, current_user.current_tenant_id)
-
-        copy_app = self.create_app_copy(app)
+    def post(self, app_model):
+        copy_app = self.create_app_copy(app_model)
         db.session.add(copy_app)
 
         app_config = db.session.query(AppModelConfig). \
-            filter(AppModelConfig.app_id == app_id). \
+            filter(AppModelConfig.app_id == app_model.id). \
             one_or_none()
 
         if app_config:
